@@ -9,6 +9,7 @@
 #import "EKMapper.h"
 #import "EKFieldMapping.h"
 #import "EKTransformer.h"
+#import "objc/runtime.h"
 
 @implementation EKMapper
 
@@ -48,17 +49,73 @@
         [self setField:obj onObject:object fromRepresentation:representation];
     }];
     [mapping.hasOneMappings enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
-        id result = [self objectFromExternalRepresentation:[representation valueForKeyPath:key] withMapping:obj];
+        id result = nil;
+        if ([key isKindOfClass:[NSString class]]) {
+            NSString *keyString = (NSString*)key;
+            NSArray *keyComponents = [keyString componentsSeparatedByString:@"."];
+
+            id newresult = [representation objectForKey:keyComponents[0]];
+            for (int i=1;i<[keyComponents count];i++) {
+                newresult = [newresult objectForKey:keyComponents[i]];
+            }
+            result = [self objectFromExternalRepresentation:newresult withMapping:obj];
+        } else {
+            result = [self objectFromExternalRepresentation:[representation valueForKeyPath:key] withMapping:obj];
+        }
+        result = [self objectFromExternalRepresentation:[representation valueForKeyPath:key] withMapping:obj];
         EKObjectMapping * mapping = obj;
-        [object setValue:result forKeyPath:mapping.field];
+        [object setValue:result forKey:mapping.field];
     }];
     [mapping.hasManyMappings enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
-        NSArray *arrayToBeParsed = [representation valueForKeyPath:key];
+        NSArray *arrayToBeParsed;
+
+        if ([key isKindOfClass:[NSString class]]) {
+            NSString *keyString = (NSString*)key;
+            NSArray *keyComponents = [keyString componentsSeparatedByString:@"."];
+
+            id newresult = [representation objectForKey:keyComponents[0]];
+            for (int i=1;i<[keyComponents count];i++) {
+                newresult = [newresult objectForKey:keyComponents[i]];
+            }
+            arrayToBeParsed = newresult;
+        } else {
+            arrayToBeParsed = [representation valueForKeyPath:key];
+        }
+
+
+//        NSArray *arrayToBeParsed = [representation valueForKeyPath:key];
         NSArray *parsedArray = [self arrayOfObjectsFromExternalRepresentation:arrayToBeParsed withMapping:obj];
+        id parsedObjects = [EKMapper convertPropertyArray:parsedArray forObject:object withPropertyName:[obj field]];
         EKObjectMapping * mapping = obj;
-        [object setValue:parsedArray forKeyPath:mapping.field];
+        [object setValue:parsedObjects forKeyPath:mapping.field];
     }];
     return object;
+}
+
++ (id)convertPropertyArray:(NSArray *)array forObject:(id)object withPropertyName:(NSString *)propertyName {
+    id convertedObject = array;
+    objc_property_t property = class_getProperty([object class], [propertyName UTF8String]);
+    if (property) {
+        NSString *propertyAttributes = [NSString stringWithUTF8String:property_getAttributes(property)];
+        if ([propertyAttributes length] > 0) {
+            if (!NSEqualRanges([propertyAttributes rangeOfString:@"NSSet"], NSMakeRange(NSNotFound, 0))) {
+                convertedObject = [NSSet setWithArray:array];
+            }
+            else if (!NSEqualRanges([propertyAttributes rangeOfString:@"NSMutableSet"], NSMakeRange(NSNotFound, 0))) {
+                convertedObject = [[NSSet setWithArray:array] mutableCopy];
+            }
+            else if (!NSEqualRanges([propertyAttributes rangeOfString:@"NSOrderedSet"], NSMakeRange(NSNotFound, 0))) {
+                convertedObject = [NSOrderedSet orderedSetWithArray:array];
+            }
+            else if (!NSEqualRanges([propertyAttributes rangeOfString:@"NSMutableOrderedSet"], NSMakeRange(NSNotFound, 0))) {
+                convertedObject = [[NSOrderedSet orderedSetWithArray:array] mutableCopy];
+            }
+            else if (!NSEqualRanges([propertyAttributes rangeOfString:@"NSMutableArray"], NSMakeRange(NSNotFound, 0))) {
+                convertedObject = [NSMutableArray arrayWithArray:array];
+            }
+        }
+    }
+    return convertedObject;
 }
 
 + (id)fillObject:(id)object fromExternalRepresentation:(NSDictionary *)externalRepresentation
@@ -174,7 +231,19 @@
             value = nil;
         }
     } else {
-        value = [representation valueForKeyPath:fieldMapping.keyPath];
+        if ([fieldMapping.keyPath isKindOfClass:[NSString class]]) {
+            NSString *keyString = (NSString*)fieldMapping.keyPath;
+            NSArray *keyComponents = [keyString componentsSeparatedByString:@"."];
+
+            value = [representation objectForKey:keyComponents[0]];
+            for (int i=1;i<[keyComponents count];i++) {
+                value = [value objectForKey:keyComponents[i]];
+            }
+        } else {
+            value = [representation valueForKeyPath:fieldMapping.keyPath];
+        }
+
+//        value = [representation valueForKeyPath:fieldMapping.keyPath];
     }
     return value;
 }
